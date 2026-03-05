@@ -1,0 +1,43 @@
+{
+  "campaignTemplateId": "6",
+  "campaignName": "sn联盟招商",
+  "accessibleEmployeeIds": [
+    "0"
+  ],
+  "campaignCreatorInfo": {
+    "employeeId": 70216
+  },
+  "isPublic": true,
+  "allResource": true,
+  "bidLockProperties": 3,
+  "campaignRuleInstanceList": [
+    {
+      "ruleCode": "campaignShopRankRule",
+      "featureValue": {
+        "minValue": "1"
+      }
+    },
+    {
+      "ruleCode": "campaignShopDsrRule",
+      "featureValue": {
+        "minValue": "4.3"
+      }
+    },
+    {
+      "ruleCode": "campaignNormalCatCommissionRule",
+      "featureValue": {
+        "value": []
+      }
+    },
+    {
+      "ruleCode": "campaignServiceRateRule",
+      "featureValue": {
+        "minValue": "0.01"
+      }
+    }
+  ],
+  "publishEndTime": "2026-04-01",
+  "publishStartTime": "2026-02-26",
+  "participateEndTime": "2026-04-01",
+  "participateStartTime": "2026-02-26"
+}
