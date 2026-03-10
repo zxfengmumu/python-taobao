@@ -15,6 +15,15 @@ pyinstaller --noconfirm ^
     --name taobao_auto ^
     --icon "taobao.ico" ^
     --add-data "campaign_template.json;." ^
+    --hidden-import core --hidden-import core.config ^
+    --hidden-import core.http_client --hidden-import core.db ^
+    --hidden-import core.notify ^
+    --hidden-import browser --hidden-import browser.driver ^
+    --hidden-import browser.login --hidden-import browser.slider ^
+    --hidden-import sync --hidden-import sync.base ^
+    --hidden-import sync.campaigns --hidden-import sync.products ^
+    --hidden-import sync.orders --hidden-import sync.risk_products ^
+    --hidden-import sync.tasks ^
     panel.py
 
 if %errorlevel% neq 0 (

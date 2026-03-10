@@ -15,8 +15,8 @@ import logging
 import time
 from datetime import datetime, timedelta
 
-import order_db
-from sync_data import iter_pages, push_to_asyx
+from core import db as order_db
+from sync.base import iter_pages, push_to_asyx
 
 log = logging.getLogger("taobao_auto")
 
@@ -25,7 +25,6 @@ _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 _PRODUCT_SIGNUP_WATERMARK_KEY = "last_product_signup_watermark"
 _OVERLAP_SECONDS = 300
 
-# 已结束商品状态码，需根据实际接口返回值填写；为 None 时已结束活动走 API 同步
 _PRODUCT_STATUS_ENDED: int | None = None
 
 _PRODUCT_QUEUE_HIGH_WATERMARK = 3000
@@ -160,10 +159,12 @@ def _do_fetch_new_products():
             log.info("命中 signUpTime 水位截停，已扫描 %d 页", scanned_pages)
             break
 
+    floor_str = (datetime.now() - timedelta(seconds=_OVERLAP_SECONDS)).strftime(_TIME_FMT)
     if max_signup_str and max_signup_str > watermark_str:
         order_db.set_sync_state(_PRODUCT_SIGNUP_WATERMARK_KEY, max_signup_str)
-    elif not watermark_str and not max_signup_str:
-        log.warning("本轮未获取到 signUpTime，水位线不更新")
+    elif watermark_str and watermark_str < floor_str:
+        order_db.set_sync_state(_PRODUCT_SIGNUP_WATERMARK_KEY, floor_str)
+        log.info("无新增数据，水位线随时间推进至 %s", floor_str)
 
     fetch_duration = round(time.time() - fetch_start, 1)
     order_db.set_sync_state("last_product_fetch_duration", str(fetch_duration))
@@ -196,50 +197,7 @@ def _filter_page_by_cutoff(items, cutoff_dt, max_signup_str):
     return page_batch, hit_cutoff, max_signup_str
 
 
-def _do_fetch_new_products_legacy():
-    """旧策略保留用于回滚：单水位线命中截停。"""
-    import main
-    old_watermark = order_db.get_sync_state("last_product_key")
-    new_watermark = None
-    total = 0
-    new_count = 0
-    hit_watermark = False
-    for items, _ in iter_pages(
-        main._config["product_list_api_url"],
-        _get_product_params(),
-        _PRODUCT_REFERER,
-    ):
-        if new_watermark is None and items:
-            new_watermark = _product_key(items[0])
-        page_batch = []
-        for product in items:
-            if old_watermark and _product_key(product) == old_watermark:
-                hit_watermark = True
-                break
-            page_batch.append(product)
-
-        total += len(page_batch)
-        if page_batch:
-            changed = order_db.upsert_product_status_batch(page_batch)
-            if changed:
-                order_db.enqueue_product_batch(changed)
-                push_pending_products()
-                new_count += len(changed)
-
-        if hit_watermark:
-            break
-
-    if new_watermark:
-        order_db.set_sync_state("last_product_key", new_watermark)
-
-    log.info(
-        "增量商品拉取完成，扫描 %d 条，新增/变化 %d 条%s",
-        total, new_count,
-        "（命中水位线截停）" if hit_watermark else "",
-    )
-
-
-# ========== 公开入口 2：推送待发队列（每分钟）==========
+# ========== 公开入口 2：推送待发队列（每20秒）==========
 
 def push_pending_products():
     """循环消费商品推送队列直到清空。"""
@@ -382,7 +340,7 @@ def _sync_one_campaign(campaign_id):
 
 
 def _bulk_end_campaign_products(ended_ids):
-    """处理已结束活动的商品。配置了 _PRODUCT_STATUS_ENDED 时本地批量更新，否则走 API。"""
+    """处理已结束活动的商品。"""
     if _PRODUCT_STATUS_ENDED is not None:
         changed = order_db.mark_and_enqueue_campaign_products_ended(
             ended_ids, _PRODUCT_STATUS_ENDED,

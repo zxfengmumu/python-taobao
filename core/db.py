@@ -14,7 +14,7 @@ import logging
 import threading
 from datetime import datetime, timedelta
 
-from config import get_runtime_dir
+from core.config import get_runtime_dir
 
 log = logging.getLogger("taobao_auto")
 
@@ -90,7 +90,6 @@ _DDL = """
     CREATE INDEX IF NOT EXISTS idx_campaigns_end_time ON campaigns(publish_end_time);
 """
 
-# inflight/lease 索引依赖迁移后才存在的列，必须在 _ensure_queue_columns 之后执行
 _DDL_INFLIGHT_INDEXES = """
     CREATE INDEX IF NOT EXISTS idx_ouq_inflight_lease
         ON order_update_queue(inflight, lease_until);
@@ -167,11 +166,7 @@ def get_order_status(tb_trade_id):
 
 
 def upsert_order_status_batch(orders):
-    """批量 upsert 订单状态，返回有实质变化的订单原始 dict 列表。
-
-    整批在一个事务内处理，单次 commit。
-    orders: [{"tbTradeId": ..., "tbTradeParentId": ..., ...}, ...]
-    """
+    """批量 upsert 订单状态，返回有实质变化的订单原始 dict 列表。"""
     if not orders:
         return []
     conn = _get_conn()
@@ -227,10 +222,7 @@ def get_stale_orders(days=15):
 
 
 def cleanup_non_paid(days=3):
-    """删除 N 天前创建且 pay_status != 12 的订单，返回删除行数。
-
-    以 create_time 为准，避免因无状态变化导致 updated_at 不更新而误删有效订单。
-    """
+    """删除 N 天前创建且 pay_status != 12 的订单，返回删除行数。"""
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     conn = _get_conn()
     cursor = conn.execute(
@@ -287,10 +279,7 @@ def get_order_queue_count():
 # ---------- product_status ----------
 
 def upsert_product_status_batch(products):
-    """批量 upsert 商品状态，返回有实质变化的商品原始 dict 列表。
-
-    products: [{"advertisingUnit": {"itemId": ...}, "campaignId": ..., "status": ...}, ...]
-    """
+    """批量 upsert 商品状态，返回有实质变化的商品原始 dict 列表。"""
     if not products:
         return []
     conn = _get_conn()
@@ -580,10 +569,11 @@ def upsert_campaigns_batch(campaigns):
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     rows = []
     for c in campaigns:
-        campaign_id = str(c.get("campaignId", ""))
+        campaign = c.get("campaign") or {}
+        campaign_id = str(campaign.get("campaignId", ""))
         if not campaign_id:
             continue
-        rows.append((campaign_id, str(c.get("publishEndTime", "")), now_str))
+        rows.append((campaign_id, str(campaign.get("publishEndTime", "")), now_str))
     if not rows:
         return
     conn = _get_conn()

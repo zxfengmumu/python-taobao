@@ -1,6 +1,6 @@
 """任务调度执行模块：从 ASYX 拉取任务 → 分发到处理器 → 提交结果。
 
-每分钟触发一次，循环拉取直到无任务为止。
+按 task_poll_interval（默认 10 秒）触发，循环拉取直到无任务为止。
 处理器通过 (module, business, operation) 三元组路由。
 无论执行成功与否，结果都必须提交回 ASYX。
 """
@@ -9,7 +9,13 @@ import time
 import logging
 from urllib.parse import urlencode
 
-from sync_data import _browser_get_json, push_to_asyx
+from browser.driver import browser_get_json, get_tb_token, browser_post_form
+from sync.base import push_to_asyx, iter_pages
+from sync.products import (
+    _get_product_params,
+    _get_product_params_by_campaign,
+    _PRODUCT_REFERER,
+)
 
 log = logging.getLogger("taobao_auto")
 
@@ -45,7 +51,7 @@ def _query_product_by_item_id(item_id):
         log.warning("product_list_api_url 未配置，无法查询商品状态")
         return []
 
-    tb_token = main.get_tb_token(main._tab)
+    tb_token = get_tb_token(main._tab)
     if not tb_token:
         log.warning("未找到 _tb_token_，无法查询商品状态")
         return []
@@ -64,7 +70,7 @@ def _query_product_by_item_id(item_id):
     }
     full_url = base_url + "?" + urlencode(params)
 
-    resp_text = _browser_get_json(full_url, _PRODUCT_LIST_REFERER)
+    resp_text = browser_get_json(full_url, _PRODUCT_LIST_REFERER)
     if not resp_text:
         log.warning("查询商品状态无响应: itemId=%s", item_id)
         return []
@@ -107,19 +113,14 @@ def _sync_product_status_after_audit(item_id):
 
 
 def _handle_product_audit(data, audit_type):
-    """商品审核处理器：通过浏览器调用阿里妈妈审核接口。
-
-    审核成功后等待一段时间，重新查询商品状态并同步到 ASYX。
-    audit_type: 1=通过, 2=拒绝
-    data: {"signUpRecordId": xxx, "itemId": xxx, ...}
-    """
+    """商品审核处理器。audit_type: 1=通过, 2=拒绝。"""
     import main
 
     tab = main._tab
     if not tab:
         return _error_result("浏览器 tab 不可用")
 
-    tb_token = main.get_tb_token(tab)
+    tb_token = get_tb_token(tab)
     if not tb_token:
         return _error_result("未找到 _tb_token_")
 
@@ -148,7 +149,7 @@ def _handle_product_audit(data, audit_type):
         tab.get("https://fuwu.alimama.com/")
         time.sleep(3)
 
-    resp_text = main._browser_post_form(
+    resp_text = browser_post_form(
         tab, _PRODUCT_AUDIT_URL, form_data, _PRODUCT_AUDIT_REFERER,
     )
     if not resp_text:
@@ -168,15 +169,105 @@ def _handle_product_audit(data, audit_type):
     return result
 
 
+def _handle_product_sync_product(data):
+    """同步指定活动下的指定商品。"""
+    import main
+
+    activity_id = data.get("activityId")
+    product_id = data.get("productId")
+    if not activity_id:
+        return _error_result("缺少 activityId")
+    if not product_id:
+        return _error_result("缺少 productId")
+
+    campaign_id = str(activity_id)
+    item_id = str(product_id)
+
+    products = _query_product_by_item_id(item_id)
+    if not products:
+        return _error_result(f"未查询到商品: itemId={item_id}")
+
+    matched = [p for p in products if str(p.get("campaignId", "")) == campaign_id]
+    if not matched:
+        return _error_result(
+            f"未找到匹配商品: itemId={item_id}, campaignId={campaign_id}"
+        )
+
+    api_url = main._config.get("product_save_api_url", "")
+    if not api_url:
+        return _error_result("product_save_api_url 未配置")
+
+    pushed = push_to_asyx(matched, api_url)
+    log.info(
+        "商品同步完成: itemId=%s, campaignId=%s, 匹配 %d 条, 推送 %d 条",
+        item_id, campaign_id, len(matched), pushed,
+    )
+    return {"total": len(matched), "pushed": pushed}
+
+
+def _handle_product_sync_activity(data):
+    """同步指定活动下的所有商品。"""
+    import main
+
+    activity_id = data.get("activityId")
+    if not activity_id:
+        return _error_result("缺少 activityId")
+
+    campaign_id = str(activity_id)
+    api_url = main._config.get("product_save_api_url", "")
+    if not api_url:
+        return _error_result("product_save_api_url 未配置")
+
+    total = 0
+    pushed = 0
+    for items, _ in iter_pages(
+        main._config["product_list_api_url"],
+        _get_product_params_by_campaign(campaign_id),
+        _PRODUCT_REFERER,
+    ):
+        total += len(items)
+        pushed += push_to_asyx(items, api_url)
+
+    log.info("活动商品同步完成: campaignId=%s, 拉取 %d 条, 推送 %d 条", campaign_id, total, pushed)
+    return {"total": total, "pushed": pushed}
+
+
+def _handle_product_sync_all(data):
+    """全量同步所有商品。"""
+    import main
+
+    api_url = main._config.get("product_save_api_url", "")
+    if not api_url:
+        return _error_result("product_save_api_url 未配置")
+
+    total = 0
+    pushed = 0
+    for items, _ in iter_pages(
+        main._config["product_list_api_url"],
+        _get_product_params(),
+        _PRODUCT_REFERER,
+    ):
+        total += len(items)
+        pushed += push_to_asyx(items, api_url)
+        log.info("全量商品同步进度: 已拉取 %d 条, 已推送 %d 条", total, pushed)
+
+    log.info("全量商品同步完成: 拉取 %d 条, 推送 %d 条", total, pushed)
+    return {"total": total, "pushed": pushed}
+
+
 _HANDLERS = {
     ("product", "audit", "pass"): lambda data: _handle_product_audit(data, audit_type=1),
     ("product", "audit", "reject"): lambda data: _handle_product_audit(data, audit_type=2),
+    ("product", "sync", "product"): _handle_product_sync_product,
+    ("product", "sync", "activity"): _handle_product_sync_activity,
+    ("product", "sync", "all"): _handle_product_sync_all,
 }
 
 
 def _fetch_task():
     """从 ASYX 拉取单个待执行任务，无任务时返回 None。"""
     import main
+    from core.http_client import asyx_authed_request
 
     url = main._config.get("task_fetch_url", "")
     if not url:
@@ -184,7 +275,7 @@ def _fetch_task():
         return None
 
     try:
-        resp = main.asyx_authed_request("GET", url, timeout=30)
+        resp = asyx_authed_request("GET", url, timeout=30)
         if not resp:
             return None
         body = resp.json()
@@ -198,6 +289,11 @@ def _fetch_task():
         if not all(task.get(f) for f in required_fields):
             log.error("任务数据缺少必要字段: %s", task)
             return None
+        log.info(
+            "拉取到任务: id=%s, raw_key=(%r, %r, %r)",
+            task.get("id"),
+            task.get("module"), task.get("business"), task.get("operation"),
+        )
         return task
     except Exception as e:
         log.error("任务拉取失败: %s", e)
@@ -207,6 +303,7 @@ def _fetch_task():
 def _submit_task_result(task_id, results):
     """将任务执行结果提交到 ASYX，无论成功失败都必须提交。"""
     import main
+    from core.http_client import asyx_authed_request
 
     url = main._config.get("task_submit_url", "")
     if not url:
@@ -215,7 +312,7 @@ def _submit_task_result(task_id, results):
 
     payload = {"id": task_id, "result": results}
     try:
-        resp = main.asyx_authed_request("POST", url, json=payload, timeout=30)
+        resp = asyx_authed_request("POST", url, json=payload, timeout=30)
         if not resp:
             log.error("任务结果提交失败: 无法获取 ASYX token, taskId=%s", task_id)
             return
@@ -226,10 +323,17 @@ def _submit_task_result(task_id, results):
 
 def _dispatch_task(task):
     """根据 module/business/operation 路由到处理器并执行。"""
-    key = (task["module"], task["business"], task["operation"])
+    key = (
+        str(task["module"]).strip(),
+        str(task["business"]).strip(),
+        str(task["operation"]).strip(),
+    )
     handler = _HANDLERS.get(key)
     if not handler:
-        log.warning("未知任务类型: %s", key)
+        log.warning(
+            "未知任务类型: %s (repr=%r), 可用类型: %s",
+            key, key, list(_HANDLERS.keys()),
+        )
         return _error_result(f"未知任务类型: {'/'.join(key)}")
     try:
         return handler(task.get("data") or {})

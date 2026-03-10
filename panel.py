@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
 import main
-from config import load_config, save_config
+from core.config import load_config, save_config
 
 TAB_FIELDS = {
     "浏览器": [
@@ -47,6 +47,7 @@ TAB_FIELDS = {
         ("order_full_sync_range_days", "订单全量对账范围(天)"),
         ("order_status_sync_time", "订单每日对账时间 (HH:MM)"),
         ("product_full_sync_time", "商品每日对账时间 (HH:MM)"),
+        ("risk_product_sync_interval_seconds", "风险商品同步间隔(秒)"),
     ],
 }
 
@@ -187,6 +188,7 @@ class PanelApp:
             _INT_KEYS = (
                 "browser_port", "campaign_duration_days",
                 "order_full_sync_range_days",
+                "risk_product_sync_interval_seconds",
             )
             if key in _INT_KEYS:
                 try:
@@ -202,7 +204,7 @@ class PanelApp:
         messagebox.showinfo("提示", "配置已保存")
 
     def _on_reset(self):
-        from config import DEFAULT_CONFIG
+        from core.config import DEFAULT_CONFIG
         for key, var in self._entries.items():
             var.set(str(DEFAULT_CONFIG.get(key, "")))
 
@@ -238,8 +240,9 @@ class PanelApp:
     def _on_manual_campaign(self):
         if not self._running:
             return
+        from sync.campaigns import create_campaign
         threading.Thread(
-            target=lambda: main.run_guarded_task("create_campaign", main.create_campaign),
+            target=lambda: main.run_guarded_task("create_campaign", create_campaign),
             daemon=True,
         ).start()
 
@@ -249,8 +252,8 @@ class PanelApp:
         threading.Thread(target=self._sync_products_then_orders, daemon=True).start()
 
     def _sync_products_then_orders(self):
-        from sync_products import fetch_new_products, push_pending_products
-        from sync_orders import fetch_new_orders, push_pending_orders
+        from sync.products import fetch_new_products, push_pending_products
+        from sync.orders import fetch_new_orders, push_pending_orders
         main.run_guarded_task("fetch_products", fetch_new_products)
         main.run_guarded_task("push_products", push_pending_products)
         main.run_guarded_task("fetch_orders", fetch_new_orders)
@@ -259,7 +262,7 @@ class PanelApp:
     def _on_manual_sync_campaigns(self):
         if not self._running:
             return
-        from sync_data import sync_campaigns
+        from sync.campaigns import sync_campaigns
         threading.Thread(
             target=lambda: main.run_guarded_task("sync_campaigns", sync_campaigns),
             daemon=True,
@@ -271,7 +274,7 @@ class PanelApp:
         threading.Thread(target=self._sync_orders_full, daemon=True).start()
 
     def _sync_orders_full(self):
-        from sync_orders import fetch_new_orders, push_pending_orders
+        from sync.orders import fetch_new_orders, push_pending_orders
         main.run_guarded_task("fetch_orders", fetch_new_orders)
         main.run_guarded_task("push_orders", push_pending_orders)
 
@@ -281,7 +284,7 @@ class PanelApp:
         threading.Thread(target=self._sync_products_full, daemon=True).start()
 
     def _sync_products_full(self):
-        from sync_products import fetch_new_products, push_pending_products
+        from sync.products import fetch_new_products, push_pending_products
         main.run_guarded_task("fetch_products", fetch_new_products)
         main.run_guarded_task("push_products", push_pending_products)
 

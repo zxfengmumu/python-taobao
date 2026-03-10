@@ -2,19 +2,21 @@ import os
 import sys
 import json
 
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def get_runtime_dir() -> str:
-    """返回运行时基础目录：打包后为 exe 所在目录，开发时为脚本所在目录。"""
+    """返回运行时基础目录：打包后为 exe 所在目录，开发时为项目根目录。"""
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return _PROJECT_ROOT
 
 
 def get_bundle_dir() -> str:
-    """返回只读资源目录：打包后为 _MEIPASS 临时目录，开发时为脚本所在目录。"""
+    """返回只读资源目录：打包后为 _MEIPASS 临时目录，开发时为项目根目录。"""
     if getattr(sys, "frozen", False):
         return sys._MEIPASS  # type: ignore[attr-defined]
-    return os.path.dirname(os.path.abspath(__file__))
+    return _PROJECT_ROOT
 
 
 _BASE_DIR = get_runtime_dir()
@@ -79,6 +81,8 @@ DEFAULT_CONFIG = {
     "order_full_sync_range_days": 15,
     "order_status_sync_time": "03:00",
     "product_full_sync_time": "04:00",
+    "task_poll_interval": 10,
+    "risk_product_sync_interval_seconds": 60,
     "debug_http_body": False,
 }
 

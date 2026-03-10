@@ -23,11 +23,12 @@
   "selector_slider": "#nc_1_n1z",
   "selector_slider_container": "#nc_1__scale_text",
   "selector_slider_fail": "#nc_1_refresh1",
-  "schedule_time": "09:00",
+  "schedule_time": "01:00",
   "campaign_name_prefix": "sn联盟招商",
   "campaign_duration_days": 35,
   "order_query_start_time": "2026-02-25 00:00:00",
   "order_full_sync_range_days": 15,
   "order_status_sync_time": "03:00",
-  "product_full_sync_time": "04:00"
+  "product_full_sync_time": "04:00",
+  "risk_product_sync_interval_seconds": 60
 }

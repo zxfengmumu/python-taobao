@@ -1,6 +1,6 @@
 """订单同步模块：分钟级增量拉取 + 独立推送队列 + 每日状态对账。
 
-依赖本地 SQLite（order_db）作为中间层，拉取与推送完全解耦。
+依赖本地 SQLite（core.db）作为中间层，拉取与推送完全解耦。
 """
 import json
 import time
@@ -9,19 +9,19 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
-import order_db
-from sync_data import push_to_asyx
+from core import db as order_db
+from sync.base import push_to_asyx, is_session_expired
 
 log = logging.getLogger("taobao_auto")
 
 _MAX_RETRIES = 3
-_CHECKPOINT_INTERVAL = 5  # 每5页更新一次水位线
+_CHECKPOINT_INTERVAL = 5
 _PAGE_INTERVAL = 2
 _PER_PAGE_SIZE = 40
 _PUSH_BATCH_SIZE = 500
-_DEFAULT_OVERLAP_SECONDS = 30  # 默认重叠时间（秒）
-_MIN_OVERLAP_SECONDS = 30  # 最小重叠时间
-_MAX_OVERLAP_SECONDS = 120  # 最大重叠时间
+_DEFAULT_OVERLAP_SECONDS = 30
+_MIN_OVERLAP_SECONDS = 30
+_MAX_OVERLAP_SECONDS = 120
 _ORDER_QUEUE_HIGH_WATERMARK = 3000
 _ORDER_QUEUE_MAX_WATERMARK = 12000
 
@@ -36,13 +36,16 @@ _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 # ========== 底层：分页拉取 ==========
 
 def _fetch_order_page(base_url, params, page_no):
-    """拉取单页订单，失败时指数退避重试。"""
-    from sync_data import _browser_get_json
+    """拉取单页订单，失败时指数退避重试，检测到会话过期自动触发重登录。"""
+    import main
+    from browser.driver import browser_get_json, get_tb_token
+    from browser.login import trigger_relogin
 
     full_url = base_url + "?" + urlencode(params)
+    relogin_attempted = False
 
     for attempt in range(1, _MAX_RETRIES + 1):
-        resp_text = _browser_get_json(full_url, _ORDER_REFERER)
+        resp_text = browser_get_json(full_url, _ORDER_REFERER)
         if not resp_text:
             if attempt < _MAX_RETRIES:
                 wait = 2 ** attempt
@@ -70,6 +73,16 @@ def _fetch_order_page(base_url, params, page_no):
             return None
 
         if not result.get("success"):
+            if is_session_expired(result) and not relogin_attempted:
+                log.warning("订单接口返回 resultCode=None，判定为会话过期，触发重登录")
+                relogin_attempted = True
+                if trigger_relogin():
+                    params["_tb_token_"] = get_tb_token(main._tab) or ""
+                    params["t"] = str(int(time.time() * 1000))
+                    full_url = base_url + "?" + urlencode(params)
+                    continue
+                log.error("重登录失败，订单第 %d 页拉取终止", page_no)
+                return None
             log.error(
                 "订单接口返回失败 (第 %d 页): resultCode=%s",
                 page_no, result.get("resultCode"),
@@ -81,14 +94,15 @@ def _fetch_order_page(base_url, params, page_no):
 
 
 def _iter_order_pages(start_time, end_time, keyword1=""):
-    """生成器：逐页 yield 订单列表，支持游标深分页和优雅中断，动态调整请求间隔。"""
+    """生成器：逐页 yield 订单列表，支持游标深分页和优雅中断。"""
     import main
+    from browser.driver import get_tb_token
 
     if not main._tab:
         log.error("浏览器 tab 不可用")
         return
 
-    tb_token = main.get_tb_token(main._tab)
+    tb_token = get_tb_token(main._tab)
     if not tb_token:
         log.error("未找到 _tb_token_，无法拉取订单")
         return
@@ -263,7 +277,6 @@ def _do_fetch_new_orders():
                 log.info("分段水位线已更新: %s (已处理 %d 页)", last_confirmed_time, page_count)
 
     if page_count == 0:
-        # 本轮未成功处理任何分页，不推进水位，避免失败场景下跳过数据。
         log.warning("本轮未拉到可处理订单分页，保持上次订单水位不变")
 
     fetch_duration = time.time() - fetch_start_time
@@ -279,7 +292,7 @@ def _do_fetch_new_orders():
     )
 
 
-# ========== 公开入口 2：推送待发队列（每分钟）==========
+# ========== 公开入口 2：推送待发队列（每20秒）==========
 
 def push_pending_orders():
     """循环消费订单推送队列直到清空，支持指数退避重试。"""
@@ -308,7 +321,6 @@ def push_pending_orders():
             total_pushed += pushed
             log.info("订单推送成功 %d 条，已从队列删除", pushed)
         elif pushed > 0:
-            # 仅删除已确认成功的前缀记录，避免部分成功场景误删未成功数据。
             success_ids = ids[:pushed]
             remain_ids = ids[pushed:]
             order_db.delete_from_queue(success_ids)
