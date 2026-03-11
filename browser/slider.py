@@ -59,8 +59,8 @@ def _has_slider_fail_indicator(ctx, config):
     return any(js_exists(ctx, s) for s in selectors)
 
 
-def _detect_slider_fail(ctx, config):
-    """检测滑块验证是否失败，依次尝试多个选择器查找并点击重试/刷新按钮。"""
+def _detect_slider_fail(ctx, tab, config):
+    """检测滑块验证是否失败，通过 CDP actions 点击重试按钮（isTrusted=true）。"""
     custom = config.get("selector_slider_fail", "")
     selectors = ([custom] if custom else []) + _SLIDER_FAIL_SELECTORS
     seen = set()
@@ -74,24 +74,14 @@ def _detect_slider_fail(ctx, config):
                 continue
             time.sleep(0.3)
 
-            safe = _js_safe(selector)
-            dispatched = ctx.run_js(
-                f'var el = document.querySelector("{safe}");'
-                'if(el){'
-                '  el.click();'
-                '  el.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));'
-                '  return true;'
-                '} return false;'
-            )
-            if dispatched:
-                log.info("通过 JS dispatchEvent 点击了滑块重试按钮: %s", selector)
-                return True
-
             ele = ctx.ele(selector, timeout=1)
-            if ele:
-                ele.click()
-                log.info("通过 DrissionPage 点击了滑块重试按钮: %s", selector)
-                return True
+            if not ele:
+                continue
+            tab.actions.move_to(ele)
+            time.sleep(random.uniform(0.1, 0.3))
+            tab.actions.click()
+            log.info("通过 actions 点击了滑块重试按钮: %s", selector)
+            return True
         except Exception:
             continue
     return False
@@ -126,12 +116,12 @@ def _try_solve_slider_in(ctx, tab, config):
     max_attempts = 3
 
     if not js_visible(ctx, sel_container):
-        if _detect_slider_fail(ctx, config):
+        if _detect_slider_fail(ctx, tab, config):
             log.info("容器不可见但检测到验证失败按钮，已点击重试")
             return True
         return False
 
-    if _detect_slider_fail(ctx, config):
+    if _detect_slider_fail(ctx, tab, config):
         log.info("检测到滑块验证失败状态，点击刷新重试...")
         time.sleep(1.5)
 
@@ -167,7 +157,7 @@ def _try_solve_slider_in(ctx, tab, config):
             log.info("滑块验证通过（容器已消失）")
             return True
 
-        if _detect_slider_fail(ctx, config):
+        if _detect_slider_fail(ctx, tab, config):
             log.info("第 %d 次拖动后验证失败，已点击重试", attempt)
             time.sleep(2)
             continue
