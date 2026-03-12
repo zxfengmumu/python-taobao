@@ -42,11 +42,7 @@ def js_visible(ctx, css_selector):
 
 
 _SLIDER_FAIL_SELECTORS = [
-    "#nc_1_refresh1",
-    ".nc-lang-cnt a",
-    ".errloading a",
-    ".btn-refresh",
-    ".nc_iconfont.btn_refresh",
+    ".nc_wrapper > .errloading",
 ]
 
 
@@ -70,11 +66,12 @@ def _detect_slider_fail(ctx, tab, config):
             continue
         seen.add(selector)
         try:
-            if not js_visible(ctx, selector):
+            if not js_exists(ctx, selector):
                 continue
             time.sleep(0.3)
 
-            ele = ctx.ele(selector, timeout=1)
+            drission_sel = f"css:{selector}" if " " in selector else selector
+            ele = ctx.ele(drission_sel, timeout=1)
             if not ele:
                 continue
             tab.actions.move_to(ele)
@@ -133,7 +130,8 @@ def _try_solve_slider_in(ctx, tab, config):
             if not _has_slider_fail_indicator(ctx, config):
                 log.info("滑块不可见且无失败标志，视为正常状态")
                 return False
-            log.info("滑块验证失败后等待重新加载...")
+            log.info("检测到失败标志，尝试点击重试...")
+            _detect_slider_fail(ctx, tab, config)
             time.sleep(1.5)
             continue
 
@@ -154,8 +152,13 @@ def _try_solve_slider_in(ctx, tab, config):
         time.sleep(2)
 
         if not js_exists(ctx, sel_container):
-            log.info("滑块验证通过（容器已消失）")
-            return True
+            if not _has_slider_fail_indicator(ctx, config):
+                log.info("滑块验证通过（容器已消失且无失败标志）")
+                return True
+            log.info("容器消失但检测到失败标志，尝试点击重试...")
+            _detect_slider_fail(ctx, tab, config)
+            time.sleep(1.5)
+            continue
 
         if _detect_slider_fail(ctx, tab, config):
             log.info("第 %d 次拖动后验证失败，已点击重试", attempt)

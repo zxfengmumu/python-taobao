@@ -22,7 +22,7 @@
   "selector_ready_btn": "div > div.Ready__Body-sc-th64it-3.idPBpi > div > a > button",
   "selector_slider": "#nc_1_n1z",
   "selector_slider_container": "#nc_1__scale_text",
-  "selector_slider_fail": "#nc_1_refresh1",
+  "selector_slider_fail": ".nc_wrapper > .errloading",
   "schedule_time": "01:00",
   "campaign_name_prefix": "sn联盟招商",
   "campaign_duration_days": 35,
