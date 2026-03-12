@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     "asyx_password": "",
     "cookie_api_url": "https://m.asyx888.com/prod-api/basis/integral/config/editBatch",
     "campaign_save_api_url": "https://m.asyx888.com/prod-api/taobao/campaign/saveBatch",
+    "campaign_claim_switch_api_url": "https://m.asyx888.com/prod-api/sass/unified/colonel/activity/claim/switch",
     "product_save_api_url": "https://m.asyx888.com/prod-api/taobao/product/saveBatch",
     "order_save_api_url": "https://m.asyx888.com/prod-api/taobao/order/saveBatch",
     "task_fetch_url": "https://m.asyx888.com/prod-api/sass/tb/task/fetch",

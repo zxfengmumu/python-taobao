@@ -71,6 +71,13 @@ def _do_sync_campaigns():
         all_campaigns, main._config["campaign_save_api_url"],
     )
     order_db.upsert_campaigns_batch(all_campaigns)
+    if pushed == len(all_campaigns):
+        _process_pending_claim_switches()
+    else:
+        log.warning(
+            "活动推送未全部成功（拉取 %d，推送 %d），跳过可认领开关步骤",
+            len(all_campaigns), pushed,
+        )
     log.info(
         "===== 活动同步完成：拉取 %d 条，推送 %d 条，已落本地库 =====",
         len(all_campaigns), pushed,
@@ -78,6 +85,79 @@ def _do_sync_campaigns():
 
 
 # ========== 活动创建 ==========
+
+
+def _extract_created_campaign_id(result):
+    """从创建活动响应中递归提取 campaignId/activityId。"""
+    def _walk(node):
+        if isinstance(node, dict):
+            for key in ("campaignId", "activityId"):
+                value = node.get(key)
+                if value not in (None, ""):
+                    return str(value)
+            for value in node.values():
+                found = _walk(value)
+                if found:
+                    return found
+            return ""
+        if isinstance(node, list):
+            for item in node:
+                found = _walk(item)
+                if found:
+                    return found
+        return ""
+
+    return _walk(result)
+
+
+def _switch_claim_by_campaign_id(campaign_id):
+    """调用 ASYX 接口将单个活动置为可认领。"""
+    import main
+    from core.http_client import asyx_authed_request
+
+    api_url = main._config["campaign_claim_switch_api_url"]
+    params = {
+        "activityIds": json.dumps([str(campaign_id)], ensure_ascii=False),
+        "claimSwitch": "1",
+    }
+    try:
+        resp = asyx_authed_request("GET", api_url, params=params, timeout=30)
+        if not resp:
+            return False, "request_failed_or_no_token"
+        result = resp.json()
+    except Exception as exc:
+        return False, f"exception:{exc}"
+
+    if result.get("code") == 200:
+        return True, "ok"
+    return False, f"code={result.get('code')},msg={result.get('msg')}"
+
+
+def _process_pending_claim_switches():
+    """处理创建后待开启可认领开关的活动。"""
+    pending_ids = order_db.get_pending_campaign_claim_switch_ids(limit=200)
+    if not pending_ids:
+        return
+
+    ok_count = 0
+    for campaign_id in pending_ids:
+        success, message = _switch_claim_by_campaign_id(campaign_id)
+        if success:
+            order_db.mark_campaign_claim_switch_done(campaign_id)
+            ok_count += 1
+            log.info("活动已开启可认领: campaign_id=%s", campaign_id)
+            continue
+        order_db.mark_campaign_claim_switch_attempt(campaign_id, message)
+        log.warning(
+            "活动可认领开关失败: campaign_id=%s, reason=%s",
+            campaign_id, message,
+        )
+
+    log.info(
+        "活动可认领开关处理完成：待处理 %d，成功 %d，失败 %d",
+        len(pending_ids), ok_count, len(pending_ids) - ok_count,
+    )
+
 
 def fetch_category_commissions(tab):
     """从模板配置接口动态获取类目佣金数据。"""
@@ -245,6 +325,12 @@ def create_campaign():
         result = json.loads(resp_text)
         if result.get("success") or result.get("data"):
             log.info("活动创建成功: %s", campaign_name)
+            campaign_id = _extract_created_campaign_id(result)
+            if campaign_id:
+                order_db.enqueue_campaign_claim_switch(campaign_id)
+                log.info("已登记活动待开启可认领: campaign_id=%s", campaign_id)
+            else:
+                log.warning("活动创建成功，但未解析到活动ID，跳过可认领登记")
         else:
             log.error("活动创建可能失败，响应: %s", mask_sensitive_data(result))
     except Exception as e:

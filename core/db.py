@@ -88,6 +88,17 @@ _DDL = """
         synced_at        TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_campaigns_end_time ON campaigns(publish_end_time);
+
+    CREATE TABLE IF NOT EXISTS campaign_claim_switch (
+        campaign_id      TEXT PRIMARY KEY,
+        created_at       TEXT DEFAULT (datetime('now','localtime')),
+        switched_at      TEXT,
+        last_attempt_at  TEXT,
+        retry_count      INTEGER DEFAULT 0,
+        last_error       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_claim_switch_switched_at
+        ON campaign_claim_switch(switched_at);
 """
 
 _DDL_INFLIGHT_INDEXES = """
@@ -610,6 +621,66 @@ def get_campaign_count():
         "SELECT COUNT(*) AS cnt FROM campaigns"
     ).fetchone()
     return row["cnt"]
+
+
+def enqueue_campaign_claim_switch(campaign_id):
+    """登记活动待开启可认领开关（幂等）。"""
+    campaign_id = str(campaign_id or "").strip()
+    if not campaign_id:
+        return
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO campaign_claim_switch(campaign_id) VALUES(?)",
+        (campaign_id,),
+    )
+    conn.commit()
+
+
+def get_pending_campaign_claim_switch_ids(limit=200):
+    """查询待开启可认领开关的活动 ID 列表。"""
+    try:
+        limit_n = int(limit)
+    except (TypeError, ValueError):
+        limit_n = 200
+    limit_n = max(1, limit_n)
+    rows = _get_conn().execute(
+        "SELECT campaign_id FROM campaign_claim_switch "
+        "WHERE switched_at IS NULL "
+        "ORDER BY created_at ASC LIMIT ?",
+        (limit_n,),
+    ).fetchall()
+    return [str(r["campaign_id"]) for r in rows]
+
+
+def mark_campaign_claim_switch_done(campaign_id):
+    """标记活动可认领开关已成功开启。"""
+    campaign_id = str(campaign_id or "").strip()
+    if not campaign_id:
+        return
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE campaign_claim_switch SET switched_at=?, last_attempt_at=?, "
+        "retry_count=retry_count+1, last_error=NULL WHERE campaign_id=?",
+        (now_str, now_str, campaign_id),
+    )
+    conn.commit()
+
+
+def mark_campaign_claim_switch_attempt(campaign_id, error_msg):
+    """记录一次可认领开关失败尝试，保留待下次重试。"""
+    campaign_id = str(campaign_id or "").strip()
+    if not campaign_id:
+        return
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    err = str(error_msg or "")[:500]
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE campaign_claim_switch SET last_attempt_at=?, "
+        "retry_count=retry_count+1, last_error=? WHERE campaign_id=?",
+        (now_str, err, campaign_id),
+    )
+    conn.commit()
 
 
 def mark_and_enqueue_campaign_products_ended(campaign_ids, ended_status):
