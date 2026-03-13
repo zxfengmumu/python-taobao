@@ -1,105 +1,105 @@
 name: Build taobao_auto.exe
 
-# 触发条件：可以手动触发，或者推送到 main 分支时触发
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
   push:
-    branches: [ main ]  # 推送到 main 分支时自动打包
-    paths-ignore:  # 这些文件变化时不触发打包
+    branches: [ main ]
+    paths-ignore:
       - 'README.md'
       - '.gitignore'
 
 jobs:
   build:
-    runs-on: windows-latest  # 使用 Windows 环境运行
+    runs-on: windows-latest
     
     steps:
-      # 1. 检出代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 设置 Python 环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'  # 根据你的 Python 版本调整
+          python-version: '3.11'
           architecture: 'x64'
+          cache: 'pip'  # 启用 pip 缓存
+          cache-dependency-path: |
+            requirements.txt
+            **/pyproject.toml
 
-      # 3. 安装依赖
+      # 缓存 PyInstaller 的工作目录，避免重复分析依赖
+      - name: Cache PyInstaller
+        uses: actions/cache@v3
+        id: cache-pyinstaller
+        with:
+          path: |
+            ~/AppData/Local/pip/Cache
+            build/
+            dist/
+            *.spec
+          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('requirements.txt', '**.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pyinstaller-
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          # 如果有 requirements.txt 则安装
-          if (Test-Path requirements.txt) {
+          if (Test-Path requirements.txt) { 
             pip install -r requirements.txt
+          } else {
+            # 如果没有 requirements.txt，安装常用依赖
+            pip install requests selenium pillow opencv-python pandas
           }
-          # 手动安装常用依赖（根据你的项目需要）
-          pip install requests selenium pillow opencv-python pandas
-
-      # 4. 执行打包（对应你的 bat 脚本）
+          
       - name: Build with PyInstaller
-        shell: cmd
         run: |
-          echo ========================================
-          echo  开始打包 taobao_auto
-          echo ========================================
+          Write-Host "开始打包 taobao_auto..." -ForegroundColor Green
           
-          pyinstaller --noconfirm ^
-            --onefile ^
-            --windowed ^
-            --name taobao_auto ^
-            --icon taobao.ico ^
-            --add-data "campaign_template.json;." ^
-            --hidden-import core --hidden-import core.config ^
-            --hidden-import core.http_client --hidden-import core.db ^
-            --hidden-import core.notify ^
-            --hidden-import browser --hidden-import browser.driver ^
-            --hidden-import browser.login --hidden-import browser.slider ^
-            --hidden-import sync --hidden-import sync.base ^
-            --hidden-import sync.campaigns --hidden-import sync.products ^
-            --hidden-import sync.orders --hidden-import sync.risk_products ^
-            --hidden-import sync.tasks ^
-            panel.py
+          # 检查是否有旧的构建文件
+          if (Test-Path "taobao_auto.spec") {
+            Write-Host "使用缓存的 spec 文件..." -ForegroundColor Yellow
+            pyinstaller taobao_auto.spec
+          } else {
+            pyinstaller --noconfirm `
+              --onefile `
+              --windowed `
+              --name taobao_auto `
+              --icon taobao.ico `
+              --add-data "campaign_template.json;." `
+              --hidden-import core --hidden-import core.config `
+              --hidden-import core.http_client --hidden-import core.db `
+              --hidden-import core.notify `
+              --hidden-import browser --hidden-import browser.driver `
+              --hidden-import browser.login --hidden-import browser.slider `
+              --hidden-import sync --hidden-import sync.base `
+              --hidden-import sync.campaigns --hidden-import sync.products `
+              --hidden-import sync.orders --hidden-import sync.risk_products `
+              --hidden-import sync.tasks `
+              panel.py
+          }
           
-          echo.
-          echo 打包完成，检查是否成功...
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "打包成功！" -ForegroundColor Green
+            
+            # 复制配置文件
+            if (Test-Path config.json) {
+              Copy-Item config.json dist\ -Force
+              Write-Host "配置文件已复制到 dist 目录" -ForegroundColor Green
+            }
+            
+            # 显示文件大小
+            $file = Get-Item "dist\taobao_auto.exe"
+            $size = [math]::Round($file.Length / 1MB, 2)
+            Write-Host "生成文件大小: $size MB" -ForegroundColor Cyan
+          } else {
+            Write-Host "打包失败！" -ForegroundColor Red
+            exit 1
+          }
           
-          # 检查是否生成成功
-          if not exist dist\taobao_auto.exe (
-            echo [失败] 打包出错
-            exit /b 1
-          )
-
-      # 5. 复制配置文件到 dist 目录
-      - name: Copy config files
-        run: |
-          echo 正在复制 config.json 到 dist 目录...
-          copy /y config.json dist\config.json
-          echo [完成] dist 目录已就绪
-          
-          # 如果有其他需要一起发布的文件，可以在这里添加
-          # copy /y README.md dist\README.md
-
-      # 6. 上传打包好的文件作为 Artifact
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: taobao_auto-windows
-          path: |
-            dist/taobao_auto.exe
-            dist/config.json
-            dist/*.ico  # 如果有图标文件
-          compression-level: 9  # 最大压缩
-          retention-days: 30    # 保留30天
-
-      # 7. （可选）创建 Release 并上传文件
-      - name: Create Release and Upload Asset
-        if: startsWith(github.ref, 'refs/tags/')  # 只有在推送标签时才执行
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            dist/taobao_auto.exe
-            dist/config.json
-          draft: false
-          prerelease: false
+          path: dist/
+          compression-level: 9
+          retention-days: 30
