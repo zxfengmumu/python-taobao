@@ -1,3 +1,4 @@
 DrissionPage
 requests
 schedule
+pyinstaller
