@@ -1,47 +1,105 @@
-name: Build Windows Executable
+name: Build taobao_auto.exe
 
-# 触发条件：可以手动触发，也可以在你推送代码或创建标签时触发
+# 触发条件：可以手动触发，或者推送到 main 分支时触发
 on:
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:  # 允许手动触发
   push:
-    tags:            # 或者当你推送像 'v*' 这样的标签时触发
-      - 'v*'
+    branches: [ main ]  # 推送到 main 分支时自动打包
+    paths-ignore:  # 这些文件变化时不触发打包
+      - 'README.md'
+      - '.gitignore'
 
 jobs:
   build:
-    # 关键步骤1: 运行在 Windows 环境上
-    runs-on: windows-latest
+    runs-on: windows-latest  # 使用 Windows 环境运行
     
     steps:
-      # 步骤1: 检出你的仓库代码
+      # 1. 检出代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 步骤2: 设置 Python 环境
+      # 2. 设置 Python 环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # 指定你的 Python 版本
+          python-version: '3.11'  # 根据你的 Python 版本调整
+          architecture: 'x64'
 
-      # 步骤3: 安装项目依赖和 PyInstaller
+      # 3. 安装依赖
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          # PyInstaller 通常已在 requirements.txt 中，若没有则手动安装
-          # pip install pyinstaller
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          # 如果有 requirements.txt 则安装
+          if (Test-Path requirements.txt) {
+            pip install -r requirements.txt
+          }
+          # 手动安装常用依赖（根据你的项目需要）
+          pip install requests selenium pillow opencv-python pandas
 
-      # 步骤4: 使用 PyInstaller 打包成单文件 exe
+      # 4. 执行打包（对应你的 bat 脚本）
       - name: Build with PyInstaller
+        shell: cmd
         run: |
-          pyinstaller --onefile --name "python-taobao" main.py
-          # --onefile: 打包成单个exe文件
-          # --name: 指定输出的exe文件名
-          # --windowed: 如果是GUI程序，可以加上这个隐藏控制台窗口
-          # --icon=myicon.ico: 如果有图标文件，可以加上
+          echo ========================================
+          echo  开始打包 taobao_auto
+          echo ========================================
+          
+          pyinstaller --noconfirm ^
+            --onefile ^
+            --windowed ^
+            --name taobao_auto ^
+            --icon taobao.ico ^
+            --add-data "campaign_template.json;." ^
+            --hidden-import core --hidden-import core.config ^
+            --hidden-import core.http_client --hidden-import core.db ^
+            --hidden-import core.notify ^
+            --hidden-import browser --hidden-import browser.driver ^
+            --hidden-import browser.login --hidden-import browser.slider ^
+            --hidden-import sync --hidden-import sync.base ^
+            --hidden-import sync.campaigns --hidden-import sync.products ^
+            --hidden-import sync.orders --hidden-import sync.risk_products ^
+            --hidden-import sync.tasks ^
+            panel.py
+          
+          echo.
+          echo 打包完成，检查是否成功...
+          
+          # 检查是否生成成功
+          if not exist dist\taobao_auto.exe (
+            echo [失败] 打包出错
+            exit /b 1
+          )
 
-      # 步骤5: 将生成的 exe 文件上传为 Artifact
-      - name: Upload Artifact
+      # 5. 复制配置文件到 dist 目录
+      - name: Copy config files
+        run: |
+          echo 正在复制 config.json 到 dist 目录...
+          copy /y config.json dist\config.json
+          echo [完成] dist 目录已就绪
+          
+          # 如果有其他需要一起发布的文件，可以在这里添加
+          # copy /y README.md dist\README.md
+
+      # 6. 上传打包好的文件作为 Artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: my-windows-app
-          path: dist/*.exe # 打包好的exe文件在 dist 目录下
+          name: taobao_auto-windows
+          path: |
+            dist/taobao_auto.exe
+            dist/config.json
+            dist/*.ico  # 如果有图标文件
+          compression-level: 9  # 最大压缩
+          retention-days: 30    # 保留30天
+
+      # 7. （可选）创建 Release 并上传文件
+      - name: Create Release and Upload Asset
+        if: startsWith(github.ref, 'refs/tags/')  # 只有在推送标签时才执行
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/taobao_auto.exe
+            dist/config.json
+          draft: false
+          prerelease: false
