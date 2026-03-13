@@ -172,29 +172,38 @@ def _try_solve_slider_in(ctx, tab, config):
 
 
 def _human_drag(tab, slider, distance):
-    """模拟人类拖动滑块：按下停顿→ease-in-out 曲线拖动→末端停顿→释放。"""
+    """模拟人类拖动滑块：悬停微调→按下停顿→ease-in-out 曲线拖动→末端停顿→释放。"""
     actions = tab.actions
     actions.move_to(slider)
-    time.sleep(random.uniform(0.08, 0.2))
-    actions.hold()
     time.sleep(random.uniform(0.1, 0.25))
+
+    # 按下前做 1~2 次微小抖动，模拟真人落点调整
+    for _ in range(random.randint(1, 2)):
+        mx = random.randint(-2, 2)
+        my = random.randint(-1, 1)
+        actions.move(mx, my, duration=0)
+        time.sleep(random.uniform(0.03, 0.07))
+
+    actions.hold()
+    time.sleep(random.uniform(0.12, 0.28))
 
     track = _build_slide_track(distance)
     for dx, dy, dt in track:
-        actions.move(dx, dy)
+        if dx != 0 or dy != 0:
+            actions.move(dx, dy, duration=0)
         time.sleep(dt)
 
-    time.sleep(random.uniform(0.05, 0.15))
+    time.sleep(random.uniform(0.05, 0.12))
     actions.release()
 
 
 def _build_slide_track(distance):
     """构建 ease-in-out 滑动轨迹，返回 [(dx, dy, sleep_sec), ...]。"""
-    num_steps = random.randint(8, 15)
-    total_time = random.uniform(0.3, 0.6)
+    num_steps = random.randint(50, 80)
+    total_time = random.uniform(0.9, 1.5)
     base_dt = total_time / num_steps
 
-    overshoot = random.randint(2, 6)
+    overshoot = random.randint(3, 8)
     main_distance = distance + overshoot
 
     positions = []
@@ -207,22 +216,24 @@ def _build_slide_track(distance):
         positions.append(round(ease * main_distance))
 
     track = []
+    prev_x = 0
     for i in range(1, len(positions)):
-        dx = positions[i] - positions[i - 1]
-        if dx <= 0:
-            continue
+        dx = positions[i] - prev_x
+        if dx < 0:
+            dx = 0
+        prev_x = positions[i]
         is_tail = (i > num_steps * 0.85)
-        dy = random.choice([-1, -1, 0, 0, 0, 1, 1]) if is_tail else random.choice([-1, 0, 0, 0, 0, 0, 1])
-        speed_factor = random.uniform(1.2, 1.8) if is_tail else random.uniform(0.8, 1.2)
+        dy = random.choice([-1, -1, 0, 0, 1, 1]) if is_tail else random.choice([-1, 0, 0, 0, 0, 1])
+        speed_factor = random.uniform(1.1, 1.6) if is_tail else random.uniform(0.85, 1.15)
         dt = base_dt * speed_factor
         track.append((dx, dy, max(dt, 0.008)))
 
-    remaining = main_distance - positions[-1]
+    remaining = main_distance - prev_x
     if remaining > 0:
-        track.append((remaining, 0, base_dt * random.uniform(1.0, 1.5)))
+        track.append((remaining, 0, base_dt * random.uniform(1.0, 1.4)))
 
     if overshoot > 0:
-        track.append((-overshoot, random.choice([-1, 0, 1]), random.uniform(0.03, 0.08)))
+        track.append((-overshoot, random.choice([-1, 0, 1]), random.uniform(0.04, 0.1)))
 
     return track
 

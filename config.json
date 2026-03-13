@@ -13,6 +13,7 @@
   "asyx_password": "aoshiyanxuan.com",
   "cookie_api_url": "https://m.asyx888.com/prod-api/basis/integral/config/editBatch",
   "campaign_save_api_url": "https://m.asyx888.com/prod-api/sass/tb/campaign/batchSave",
+  "campaign_claim_switch_api_url": "https://m.asyx888.com/prod-api/sass/unified/colonel/activity/claim/switch",
   "product_save_api_url": "https://m.asyx888.com/prod-api/sass/tb/campaign/product/batchSave",
   "order_save_api_url": "https://m.asyx888.com/prod-api/sass/tb/order/batchSave",
   "task_fetch_url": "https://m.asyx888.com/prod-api/sass/tb/task/fetch",
