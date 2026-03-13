@@ -1,0 +1,47 @@
+name: Build Windows Executable
+
+# 触发条件：可以手动触发，也可以在你推送代码或创建标签时触发
+on:
+  workflow_dispatch: # 允许手动触发
+  push:
+    tags:            # 或者当你推送像 'v*' 这样的标签时触发
+      - 'v*'
+
+jobs:
+  build:
+    # 关键步骤1: 运行在 Windows 环境上
+    runs-on: windows-latest
+    
+    steps:
+      # 步骤1: 检出你的仓库代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 步骤2: 设置 Python 环境
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # 指定你的 Python 版本
+
+      # 步骤3: 安装项目依赖和 PyInstaller
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          # PyInstaller 通常已在 requirements.txt 中，若没有则手动安装
+          # pip install pyinstaller
+
+      # 步骤4: 使用 PyInstaller 打包成单文件 exe
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --onefile --name "python-taobao" main.py
+          # --onefile: 打包成单个exe文件
+          # --name: 指定输出的exe文件名
+          # --windowed: 如果是GUI程序，可以加上这个隐藏控制台窗口
+          # --icon=myicon.ico: 如果有图标文件，可以加上
+
+      # 步骤5: 将生成的 exe 文件上传为 Artifact
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-windows-app
+          path: dist/*.exe # 打包好的exe文件在 dist 目录下
