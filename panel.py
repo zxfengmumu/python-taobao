@@ -26,6 +26,7 @@ TAB_FIELDS = {
         ("asyx_password", "密码"),
         ("cookie_api_url", "Cookie 同步接口"),
         ("campaign_save_api_url", "活动批量保存接口"),
+        ("campaign_claim_switch_api_url", "活动可认领开关接口"),
         ("product_save_api_url", "商品批量保存接口"),
         ("order_save_api_url", "订单批量保存接口"),
         ("task_fetch_url", "任务拉取接口"),
@@ -181,8 +182,8 @@ class PanelApp:
             var.set(str(cfg.get(key, "")))
 
     def _collect_config(self):
-        """从表单收集配置。"""
-        cfg = {}
+        """从表单收集配置，以已持久化的完整配置为底。"""
+        cfg = load_config()
         for key, var in self._entries.items():
             val = var.get().strip()
             _INT_KEYS = (
