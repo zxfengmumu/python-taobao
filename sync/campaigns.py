@@ -117,7 +117,7 @@ def _switch_claim_by_campaign_id(campaign_id):
 
     api_url = main._config["campaign_claim_switch_api_url"]
     params = {
-        "activityIds": json.dumps([campaign_id], ensure_ascii=False),
+        "activityIds": [campaign_id],
         "claimSwitch": "1",
     }
     try:
