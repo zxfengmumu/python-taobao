@@ -24,6 +24,12 @@
       }
     },
     {
+      "ruleCode": "campaignItemSalesRule",
+      "featureValue": {
+        "minValue": "50"
+      }
+    },
+    {
       "ruleCode": "campaignNormalCatCommissionRule",
       "featureValue": {
         "value": []
